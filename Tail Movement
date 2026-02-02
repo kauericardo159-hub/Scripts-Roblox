@@ -1,0 +1,92 @@
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+ 
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+ 
+local tails = {}
+local counter = 0
+local lastRootRotation = CFrame.new()
+ 
+-- ### Configurações de "Elite" ###
+local SETTINGS = {
+SWAY_SPEED = 4.5,        -- Velocidade do balanço ocioso
+SWAY_AMPLITUDE = 0.15,   -- Amplitude do balanço (suave)
+LERP_SPEED = 0.12,       -- Reação da "mola" (menor = mais pesado)
+DRAG_RESISTANCE = 0.05,  -- O quanto a cauda "fica para trás" ao correr
+CURVE_INERTIA = 1.5,     -- Força centrífuga em curvas
+MAX_TILT = 0.8           -- Limite para não bugar a rotação
+}
+ 
+local function scanTails()
+    tails = {}
+    for _, item in ipairs(character:GetDescendants()) do
+        if string.find(string.lower(item.Name), "tail") then
+            local part = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
+            if part then
+                local weld = part:FindFirstChild("AccessoryWeld") or part:FindFirstChildWhichIsA("Weld")
+                if weld then
+                    table.insert(tails, {weld = weld, originalC1 = weld.C1})
+                end
+            end
+        end
+    end
+end
+ 
+RunService.RenderStepped:Connect(function(dt)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if #tails == 0 or not root then return end
+    
+    -- 1. Captura de Dados de Movimento
+    local velocity = root.AssemblyLinearVelocity
+    local localVel = root.CFrame:VectorToObjectSpace(velocity) -- Velocidade relativa ao corpo
+    local rootRotation = root.CFrame
+    
+    -- Cálculo de rotação angular (para detectar curvas)
+    local rotationDiff = (rootRotation:VectorToObjectSpace(lastRootRotation.LookVector)).X
+    lastRootRotation = rootRotation
+    
+    counter = counter + (dt * SETTINGS.SWAY_SPEED)
+    
+    -- 2. Lógica de Respiração e Ocioso (Idle)
+    local isMoving = localVel.Magnitude > 1
+    local idleSway = math.sin(counter) * SETTINGS.SWAY_AMPLITUDE
+    
+    -- 3. Efeito de Arrasto (Correr para frente faz a cauda subir/recuar)
+    -- Ajustamos o Z e X baseado na velocidade local
+    local dragX = math.clamp(localVel.Z * SETTINGS.DRAG_RESISTANCE * 0.1, -SETTINGS.MAX_TILT, SETTINGS.MAX_TILT)
+    
+    -- 4. Força Centrífuga (Curvas)
+    local curveForce = math.clamp(rotationDiff * SETTINGS.CURVE_INERTIA, -SETTINGS.MAX_TILT, SETTINGS.MAX_TILT)
+    
+    -- 5. Influência de Salto/Queda
+    local fallInfluence = math.clamp(-velocity.Y * 0.02, -0.5, 0.5)
+    
+    -- Mistura final de movimentos
+    -- X: Inclinação (Salto + Arrasto)
+    -- Y: Curva + Balanço Lateral
+    -- Z: Inclinação lateral leve em curvas (Roll)
+    local targetRotation = CFrame.Angles(
+    fallInfluence + dragX, 
+    idleSway + curveForce, 
+    curveForce * 0.5 
+    )
+    
+    -- 6. Aplicação Suavizada com Lerp Dinâmico
+    for _, data in ipairs(tails) do
+        if data.weld and data.weld.Parent then
+            -- O segredo do realismo: a cauda tenta alcançar o alvo, mas com um leve "atraso"
+            data.weld.C1 = data.weld.C1:Lerp(data.originalC1 * targetRotation, SETTINGS.LERP_SPEED)
+        end
+    end
+end)
+ 
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoid = character:WaitForChild("Humanoid")
+    task.wait(1)
+    scanTails()
+end)
+ 
+task.spawn(scanTails)
